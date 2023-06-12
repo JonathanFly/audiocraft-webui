@@ -7,6 +7,30 @@ Audiocraft is a PyTorch library for deep learning research on audio generation. 
 
 ## MusicGen
 
+
+
+Work in progress. Maybe finish Monday late.
+```
+mamba update -y mamba
+pip install ffmpeg-downloader
+ffdl install -U --add-path
+
+mamba env create -f  environment-cuda-MusicGen.yml 
+
+mamba activate musicgen-infinity
+
+ffdl install --add-path
+
+pip install fairseq@https://github.com/Sharrnah/fairseq/releases/download/v0.12.4/fairseq-0.12.4-cp310-cp310-win_amd64.whl
+
+pip install -r requirements-cuda-musicgen.txt
+
+pip install triton@https://huggingface.co/r4ziel/xformers_pre_built/resolve/main/triton-2.0.0-cp310-cp310-win_amd64.whl
+```
+
+python musicgen_webui.py
+
+
 Audiocraft provides the code and models for MusicGen, [a simple and controllable model for music generation][arxiv]. MusicGen is a single stage auto-regressive
 Transformer model trained over a 32kHz <a href="https://github.com/facebookresearch/encodec">EnCodec tokenizer</a> with 4 codebooks sampled at 50 Hz. Unlike existing methods like [MusicLM](https://arxiv.org/abs/2301.11325), MusicGen doesn't require a self-supervised semantic representation, and it generates
 all 4 codebooks in one pass. By introducing a small delay between the codebooks, we show we can predict
