@@ -22,9 +22,13 @@ from audiocraft.data.audio_utils import convert_audio
 from audiocraft.data.audio import audio_write
 from audiocraft.models import MusicGen
 
-
+css = ""
 MODEL = None  # Last used model
 IS_BATCHED = "facebook/MusicGen" in os.environ.get("SPACE_ID", "")
+if IS_BATCHED:
+    from assets.share_btn import community_icon_html, loading_icon_html, share_js, css
+
+
 MAX_BATCH_SIZE = 12
 BATCHED_DURATION = 15
 INTERRUPTING = False
@@ -127,7 +131,7 @@ def predict_batched(texts, melodies):
     texts = [text[:max_text_length] for text in texts]
     load_model("melody")
     res = _do_predictions(texts, melodies, BATCHED_DURATION)
-    return [res]
+    return [res, melodies]
 
 
 def predict_full(
@@ -186,9 +190,11 @@ body .musicgen_upload_audio, body .musicgen_upload_file, body .bark_output_audio
 }
 """
 
+css += musicgen_css_style
+
 
 def ui_full(launch_kwargs):
-    with gr.Blocks(css=musicgen_css_style) as interface:
+    with gr.Blocks(css=css) as interface:
         gr.Markdown(
             """
             # MusicGen
@@ -202,8 +208,8 @@ def ui_full(launch_kwargs):
                     with gr.Column(variant="panel"):
                         gr.Markdown(
                             """
-                        Three Types of Input: 📜 Text, 🎵 Melody, 🔊 Music - Each is a different way of describing the music you want to generate.
-                        You can use any combination of them, except for 🎵 Melody which requires the melody model.
+                        ## Three Types of Input: 📜 Text, 🎵 Melody, 🔊 Music - Each can describe the music to generate.
+                        You can use any combination, except 🎵 Melody requires the melody model.
                         """
                         )
                         with gr.Row():
@@ -215,7 +221,7 @@ def ui_full(launch_kwargs):
                             melody = gr.Audio(
                                 source="upload",
                                 type="numpy",
-                                label="🎵 Melody: Upload audio as an example melody.",
+                                label="🎵 Melody: Audio File as example melody.",
                                 interactive=True,
                                 elem_classes="musicgen_upload_audio",
                                 info="",
@@ -224,7 +230,7 @@ def ui_full(launch_kwargs):
                             continuation_audio = gr.Audio(
                                 source="upload",
                                 type="filepath",
-                                label="🔊 Music: Upload audio to continue from.",
+                                label="🔊 Music: Audio File to continue from.",
                                 info="",
                                 interactive=True,
                                 elem_classes="musicgen_upload_audio",
@@ -333,7 +339,7 @@ def ui_full(launch_kwargs):
 
 
 def ui_batched(launch_kwargs):
-    with gr.Blocks(css=musicgen_css_style) as demo:
+    with gr.Blocks(css=css) as demo:
         gr.Markdown(
             """
             # MusicGen
@@ -350,7 +356,10 @@ def ui_batched(launch_kwargs):
             with gr.Column():
                 with gr.Row():
                     text = gr.Text(
-                        label="Describe your music", lines=2, interactive=True
+                        label="Describe your music",
+                        lines=2,
+                        interactive=True,
+                        elem_id="text-input",
                     )
                     melody = gr.Audio(
                         source="upload",
@@ -361,13 +370,36 @@ def ui_batched(launch_kwargs):
                 with gr.Row():
                     submit = gr.Button("Generate")
             with gr.Column():
-                output = gr.Video(label="Generated Music")
+                output = gr.Video(label="Generated Music", elem_id="generated-video")
+                output_melody = gr.Audio(
+                    label="Melody ", elem_id="melody-output", visible=False
+                )
+                with gr.Row(visible=False) as share_row:
+                    with gr.Group(elem_id="share-btn-container"):
+                        gr.HTML(community_icon_html)
+                        gr.HTML(loading_icon_html)
+                        share_button = gr.Button(
+                            "Share to community", elem_id="share-btn"
+                        )
+                        share_button.click(None, [], [], _js=share_js)
         submit.click(
+            fn=lambda x: gr.update(visible=False),
+            inputs=None,
+            outputs=[share_row],
+            queue=False,
+            show_progress=False,
+        ).then(
             predict_batched,
             inputs=[text, melody],
-            outputs=[output],
+            outputs=[output, output_melody],
             batch=True,
             max_batch_size=MAX_BATCH_SIZE,
+        ).then(
+            fn=lambda x: gr.update(visible=True),
+            inputs=None,
+            outputs=[share_row],
+            queue=False,
+            show_progress=False,
         )
         gr.Examples(
             fn=predict_batched,
