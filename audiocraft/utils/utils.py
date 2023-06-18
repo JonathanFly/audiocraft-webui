@@ -42,8 +42,14 @@ def random_subset(dataset, max_samples: int, seed: int = 42) -> torch.utils.data
     return torch.utils.data.Subset(dataset, perm[:max_samples].tolist())
 
 
-def get_loader(dataset, num_samples: tp.Optional[int], batch_size: int,
-               num_workers: int, seed: int, **kwargs) -> torch.utils.data.DataLoader:
+def get_loader(
+    dataset,
+    num_samples: tp.Optional[int],
+    batch_size: int,
+    num_workers: int,
+    seed: int,
+    **kwargs,
+) -> torch.utils.data.DataLoader:
     """Convenience function to load dataset into a dataloader with optional subset sampling.
 
     Args:
@@ -57,10 +63,7 @@ def get_loader(dataset, num_samples: tp.Optional[int], batch_size: int,
         dataset = random_subset(dataset, num_samples, seed)
 
     dataloader = flashy.distrib.loader(
-        dataset,
-        batch_size=batch_size,
-        num_workers=num_workers,
-        **kwargs
+        dataset, batch_size=batch_size, num_workers=num_workers, **kwargs
     )
     return dataloader
 
@@ -73,7 +76,9 @@ def get_dataset_from_loader(dataloader):
         return dataset
 
 
-def multinomial(input: torch.Tensor, num_samples: int, replacement=False, *, generator=None):
+def multinomial(
+    input: torch.Tensor, num_samples: int, replacement=False, *, generator=None
+):
     """torch.multinomial with arbitrary number of dimensions, and number of candidates on the last dimension.
 
     Args:
@@ -88,7 +93,9 @@ def multinomial(input: torch.Tensor, num_samples: int, replacement=False, *, gen
             located in the last dimension of tensor input.
     """
     input_ = input.reshape(-1, input.shape[-1])
-    output_ = torch.multinomial(input_, num_samples=num_samples, replacement=replacement, generator=generator)
+    output_ = torch.multinomial(
+        input_, num_samples=num_samples, replacement=replacement, generator=generator
+    )
     output = output_.reshape(*list(input.shape[:-1]), -1)
     return output
 
@@ -106,7 +113,33 @@ def sample_top_k(probs: torch.Tensor, k: int) -> torch.Tensor:
     min_value_top_k = top_k_value[..., [-1]]
     probs *= (probs >= min_value_top_k).float()
     probs.div_(probs.sum(dim=-1, keepdim=True))
+
     next_token = multinomial(probs, num_samples=1)
+    return next_token
+
+
+def negative_sample_top_k(probs: torch.Tensor, k: int) -> torch.Tensor:
+    """Sample next token from bottom K values along the last dimension of the input probs tensor.
+
+    Args:
+        probs (torch.Tensor): Input probabilities with token candidates on the last dimension.
+        k (int): The k in “bottom-k”. Must be a positive value.
+    Returns:
+        torch.Tensor: Sampled tokens.
+    """
+    bottom_k_value, _ = torch.topk(
+        probs, k, dim=-1, largest=False
+    )  # Get the bottom k values
+    max_value_bottom_k = bottom_k_value[
+        ..., [-1]
+    ]  # Get the maximum value among the bottom k
+    mask = (
+        probs > max_value_bottom_k
+    )  # Create a mask where values larger than the max of bottom k are masked out
+    probs *= (~mask).float()  # Apply the mask
+    probs /= probs.sum(dim=-1, keepdim=True)  # Re-normalize probabilities
+
+    next_token = multinomial(probs, num_samples=1)  # Sample from the new distribution
     return next_token
 
 
@@ -119,11 +152,34 @@ def sample_top_p(probs: torch.Tensor, p: float) -> torch.Tensor:
     Returns:
         torch.Tensor: Sampled tokens.
     """
+
     probs_sort, probs_idx = torch.sort(probs, dim=-1, descending=True)
     probs_sum = torch.cumsum(probs_sort, dim=-1)
     mask = probs_sum - probs_sort > p
     probs_sort *= (~mask).float()
     probs_sort.div_(probs_sort.sum(dim=-1, keepdim=True))
+
+    next_token = multinomial(probs_sort, num_samples=1)
+    next_token = torch.gather(probs_idx, -1, next_token)
+    return next_token
+
+
+def negative_sample_top_p(probs: torch.Tensor, p: float) -> torch.Tensor:
+    """Sample next token from bottom P probabilities along the last dimension of the input probs tensor.
+
+    Args:
+        probs (torch.Tensor): Input probabilities with token candidates on the last dimension.
+        p (float): The p in “bottom-p”. Must be a positive value.
+    Returns:
+        torch.Tensor: Sampled tokens.
+    """
+
+    probs_sort, probs_idx = torch.sort(probs, dim=-1, descending=False)
+    probs_sum = torch.cumsum(probs_sort, dim=-1)
+    mask = probs_sum - probs_sort > p
+    probs_sort *= (~mask).float()
+    probs_sort.div_(probs_sort.sum(dim=-1, keepdim=True))
+
     next_token = multinomial(probs_sort, num_samples=1)
     next_token = torch.gather(probs_idx, -1, next_token)
     return next_token
@@ -133,6 +189,7 @@ class DummyPoolExecutor:
     """Dummy pool executor to use when we actually have only 1 worker.
     (e.g. instead of ProcessPoolExecutor).
     """
+
     class DummyResult:
         def __init__(self, func, *args, **kwargs):
             self.func = func
@@ -156,10 +213,16 @@ class DummyPoolExecutor:
 
 
 def get_pool_executor(num_workers: int, mp_context=None):
-    return ProcessPoolExecutor(num_workers, mp_context) if num_workers > 1 else DummyPoolExecutor(1)
+    return (
+        ProcessPoolExecutor(num_workers, mp_context)
+        if num_workers > 1
+        else DummyPoolExecutor(1)
+    )
 
 
-def length_to_mask(lengths: torch.Tensor, max_len: tp.Optional[int] = None) -> torch.Tensor:
+def length_to_mask(
+    lengths: torch.Tensor, max_len: tp.Optional[int] = None
+) -> torch.Tensor:
     """Utility function to convert a tensor of sequence lengths to a mask (useful when working on padded sequences).
     For example: [3, 5] => [[1, 1, 1, 0, 0], [1, 1, 1, 1, 1]]
 
@@ -171,7 +234,9 @@ def length_to_mask(lengths: torch.Tensor, max_len: tp.Optional[int] = None) -> t
     """
     assert len(lengths.shape) == 1, "Length shape should be 1 dimensional."
     final_length = lengths.max().item() if not max_len else max_len
-    final_length = max(final_length, 1)  # if all seqs are of len zero we don't want a zero-size tensor
+    final_length = max(
+        final_length, 1
+    )  # if all seqs are of len zero we don't want a zero-size tensor
     return torch.arange(final_length)[None, :].to(lengths.device) < lengths[:, None]
 
 
@@ -195,23 +260,28 @@ def with_rank_rng(base_seed: int = 1234):
     Args:
         base_seed (int): Random seed.
     """
+
     def _decorator(fun: tp.Callable):
         @wraps(fun)
         def _decorated(*args, **kwargs):
             state = torch.get_rng_state()
             seed = base_seed ^ flashy.distrib.rank()
             torch.manual_seed(seed)
-            logger.debug('Rank dependent seed set to %d', seed)
+            logger.debug("Rank dependent seed set to %d", seed)
             try:
                 return fun(*args, **kwargs)
             finally:
                 torch.set_rng_state(state)
-                logger.debug('RNG state restored.')
+                logger.debug("RNG state restored.")
+
         return _decorated
+
     return _decorator
 
 
-def collate(tensors: tp.List[torch.Tensor], dim: int = 0) -> tp.Tuple[torch.Tensor, torch.Tensor]:
+def collate(
+    tensors: tp.List[torch.Tensor], dim: int = 0
+) -> tp.Tuple[torch.Tensor, torch.Tensor]:
     """Get a list of tensors and collate them to a single tensor. according to the following logic:
     - `dim` specifies the time dimension which will be stacked and padded.
     - The output will contain 1 new dimension (dimension index 0) which will be the size of

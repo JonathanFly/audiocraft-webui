@@ -24,7 +24,7 @@ from audiocraft.models import MusicGen
 
 
 MODEL = None  # Last used model
-IS_BATCHED = "facebook/MusicGen" in os.environ.get('SPACE_ID', '')
+IS_BATCHED = "facebook/MusicGen" in os.environ.get("SPACE_ID", "")
 MAX_BATCH_SIZE = 12
 BATCHED_DURATION = 15
 INTERRUPTING = False
@@ -34,8 +34,8 @@ _old_call = sp.call
 
 def _call_nostderr(*args, **kwargs):
     # Avoid ffmpeg vomitting on the logs.
-    kwargs['stderr'] = sp.DEVNULL
-    kwargs['stdout'] = sp.DEVNULL
+    kwargs["stderr"] = sp.DEVNULL
+    kwargs["stdout"] = sp.DEVNULL
     _old_call(*args, **kwargs)
 
 
@@ -54,13 +54,13 @@ def make_waveform(*args, **kwargs):
     # Further remove some warnings.
     be = time.time()
     with warnings.catch_warnings():
-        warnings.simplefilter('ignore')
+        warnings.simplefilter("ignore")
         out = gr.make_waveform(*args, **kwargs)
         print("Make a video took", time.time() - be)
         return out
 
 
-def load_model(version='melody'):
+def load_model(version="melody"):
     global MODEL
     print("Loading model", version)
     if MODEL is None or MODEL.name != version:
@@ -69,8 +69,15 @@ def load_model(version='melody'):
 
 def _do_predictions(texts, melodies, duration, progress=False, **gen_kwargs):
     MODEL.set_generation_params(duration=duration, **gen_kwargs)
-    print("new batch", len(texts), texts, [None if m is None else (m[0], m[1].shape) for m in melodies])
+    print(
+        "new batch",
+        len(texts),
+        texts,
+        [None if m is None else (m[0], m[1].shape) for m in melodies],
+    )
     be = time.time()
+
+    print(f"melodies: {melodies}")
     processed_melodies = []
     target_sr = 32000
     target_ac = 1
@@ -78,13 +85,21 @@ def _do_predictions(texts, melodies, duration, progress=False, **gen_kwargs):
         if melody is None:
             processed_melodies.append(None)
         else:
-            sr, melody = melody[0], torch.from_numpy(melody[1]).to(MODEL.device).float().t()
+            sr, melody = (
+                melody[0],
+                torch.from_numpy(melody[1]).to(MODEL.device).float().t(),
+            )
             if melody.dim() == 1:
                 melody = melody[None]
-            melody = melody[..., :int(sr * duration)]
+            melody = melody[..., : int(sr * duration)]
             melody = convert_audio(melody, sr, target_sr, target_ac)
             processed_melodies.append(melody)
 
+    # print(f"processed_melodies: {processed_melodies}")
+    # print shape of process
+    print(
+        f"processed_melodies shape: {[m.shape if m is not None else None for m in processed_melodies]}"
+    )
     if any(m is not None for m in processed_melodies):
         outputs = MODEL.generate_with_chroma(
             descriptions=texts,
@@ -100,8 +115,14 @@ def _do_predictions(texts, melodies, duration, progress=False, **gen_kwargs):
     for output in outputs:
         with NamedTemporaryFile("wb", suffix=".wav", delete=False) as file:
             audio_write(
-                file.name, output, MODEL.sample_rate, strategy="loudness",
-                loudness_headroom_db=16, loudness_compressor=True, add_suffix=False)
+                file.name,
+                output,
+                MODEL.sample_rate,
+                strategy="loudness",
+                loudness_headroom_db=16,
+                loudness_compressor=True,
+                add_suffix=False,
+            )
             out_files.append(pool.submit(make_waveform, file.name))
     res = [out_file.result() for out_file in out_files]
     print("batch finished", len(texts), time.time() - be)
@@ -111,12 +132,22 @@ def _do_predictions(texts, melodies, duration, progress=False, **gen_kwargs):
 def predict_batched(texts, melodies):
     max_text_length = 512
     texts = [text[:max_text_length] for text in texts]
-    load_model('melody')
+    load_model("melody")
     res = _do_predictions(texts, melodies, BATCHED_DURATION)
     return [res]
 
 
-def predict_full(model, text, melody, duration, topk, topp, temperature, cfg_coef, progress=gr.Progress()):
+def predict_full(
+    model,
+    text,
+    melody,
+    duration,
+    topk,
+    topp,
+    temperature,
+    cfg_coef,
+    progress=gr.Progress(),
+):
     global INTERRUPTING
     INTERRUPTING = False
     if temperature < 0:
@@ -133,11 +164,19 @@ def predict_full(model, text, melody, duration, topk, topp, temperature, cfg_coe
         progress((generated, to_generate))
         if INTERRUPTING:
             raise gr.Error("Interrupted.")
+
     MODEL.set_custom_progress_callback(_progress)
 
     outs = _do_predictions(
-        [text], [melody], duration, progress=True,
-        top_k=topk, top_p=topp, temperature=temperature, cfg_coef=cfg_coef)
+        [text],
+        [melody],
+        duration,
+        progress=True,
+        top_k=topk,
+        top_p=topp,
+        temperature=temperature,
+        cfg_coef=cfg_coef,
+    )
     return outs[0]
 
 
@@ -154,45 +193,68 @@ def ui_full(launch_kwargs):
             with gr.Column():
                 with gr.Row():
                     text = gr.Text(label="Input Text", interactive=True)
-                    melody = gr.Audio(source="upload", type="numpy", label="Melody Condition (optional)", interactive=True)
+                    melody = gr.Audio(
+                        source="upload",
+                        type="numpy",
+                        label="Melody Condition (optional)",
+                        interactive=True,
+                    )
                 with gr.Row():
                     submit = gr.Button("Submit")
                     # Adapted from https://github.com/rkfg/audiocraft/blob/long/app.py, MIT license.
                     _ = gr.Button("Interrupt").click(fn=interrupt, queue=False)
                 with gr.Row():
-                    model = gr.Radio(["melody", "medium", "small", "large"], label="Model", value="melody", interactive=True)
+                    model = gr.Radio(
+                        ["melody", "medium", "small", "large"],
+                        label="Model",
+                        value="melody",
+                        interactive=True,
+                    )
                 with gr.Row():
-                    duration = gr.Slider(minimum=1, maximum=120, value=10, label="Duration", interactive=True)
+                    duration = gr.Slider(
+                        minimum=1,
+                        maximum=120,
+                        value=10,
+                        label="Duration",
+                        interactive=True,
+                    )
                 with gr.Row():
                     topk = gr.Number(label="Top-k", value=250, interactive=True)
                     topp = gr.Number(label="Top-p", value=0, interactive=True)
-                    temperature = gr.Number(label="Temperature", value=1.0, interactive=True)
-                    cfg_coef = gr.Number(label="Classifier Free Guidance", value=3.0, interactive=True)
+                    temperature = gr.Number(
+                        label="Temperature", value=1.0, interactive=True
+                    )
+                    cfg_coef = gr.Number(
+                        label="Classifier Free Guidance",
+                        value=3.0,
+                        interactive=True,
+                        visible=False,
+                    )
             with gr.Column():
                 output = gr.Video(label="Generated Music")
-        submit.click(predict_full, inputs=[model, text, melody, duration, topk, topp, temperature, cfg_coef], outputs=[output])
+        submit.click(
+            predict_full,
+            inputs=[model, text, melody, duration, topk, topp, temperature, cfg_coef],
+            outputs=[output],
+        )
         gr.Examples(
             fn=predict_full,
             examples=[
                 [
                     "An 80s driving pop song with heavy drums and synth pads in the background",
                     "./assets/bach.mp3",
-                    "melody"
+                    "melody",
                 ],
                 [
                     "A cheerful country song with acoustic guitars",
                     "./assets/bolero_ravel.mp3",
-                    "melody"
+                    "melody",
                 ],
-                [
-                    "90s rock song with electric guitar and heavy drums",
-                    None,
-                    "medium"
-                ],
+                ["90s rock song with electric guitar and heavy drums", None, "medium"],
                 [
                     "a light and cheerly EDM track, with syncopated drums, aery pads, and strong emotions",
                     "./assets/bach.mp3",
-                    "melody"
+                    "melody",
                 ],
                 [
                     "lofi slow bpm electro chill with organic samples",
@@ -201,7 +263,7 @@ def ui_full(launch_kwargs):
                 ],
             ],
             inputs=[text, melody, model],
-            outputs=[output]
+            outputs=[output],
         )
         gr.Markdown(
             """
@@ -251,13 +313,26 @@ def ui_batched(launch_kwargs):
         with gr.Row():
             with gr.Column():
                 with gr.Row():
-                    text = gr.Text(label="Describe your music", lines=2, interactive=True)
-                    melody = gr.Audio(source="upload", type="numpy", label="Condition on a melody (optional)", interactive=True)
+                    text = gr.Text(
+                        label="Describe your music", lines=2, interactive=True
+                    )
+                    melody = gr.Audio(
+                        source="upload",
+                        type="numpy",
+                        label="Condition on a melody (optional)",
+                        interactive=True,
+                    )
                 with gr.Row():
                     submit = gr.Button("Generate")
             with gr.Column():
                 output = gr.Video(label="Generated Music")
-        submit.click(predict_batched, inputs=[text, melody], outputs=[output], batch=True, max_batch_size=MAX_BATCH_SIZE)
+        submit.click(
+            predict_batched,
+            inputs=[text, melody],
+            outputs=[output],
+            batch=True,
+            max_batch_size=MAX_BATCH_SIZE,
+        )
         gr.Examples(
             fn=predict_batched,
             examples=[
@@ -283,9 +358,10 @@ def ui_batched(launch_kwargs):
                 ],
             ],
             inputs=[text, melody],
-            outputs=[output]
+            outputs=[output],
         )
-        gr.Markdown("""
+        gr.Markdown(
+            """
         ### More details
 
         The model will generate 12 seconds of audio based on the description you provided.
@@ -297,7 +373,8 @@ def ui_batched(launch_kwargs):
 
         See [github.com/facebookresearch/audiocraft](https://github.com/facebookresearch/audiocraft)
         for more details.
-        """)
+        """
+        )
 
         demo.queue(max_size=8 * 4).launch(**launch_kwargs)
 
@@ -305,43 +382,39 @@ def ui_batched(launch_kwargs):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        '--listen',
+        "--listen",
         type=str,
-        default='0.0.0.0' if 'SPACE_ID' in os.environ else '127.0.0.1',
-        help='IP to listen on for connections to Gradio',
+        default="0.0.0.0" if "SPACE_ID" in os.environ else "127.0.0.1",
+        help="IP to listen on for connections to Gradio",
     )
     parser.add_argument(
-        '--username', type=str, default='', help='Username for authentication'
+        "--username", type=str, default="", help="Username for authentication"
     )
     parser.add_argument(
-        '--password', type=str, default='', help='Password for authentication'
+        "--password", type=str, default="", help="Password for authentication"
     )
     parser.add_argument(
-        '--server_port',
+        "--server_port",
         type=int,
         default=0,
-        help='Port to run the server listener on',
+        help="Port to run the server listener on",
     )
-    parser.add_argument(
-        '--inbrowser', action='store_true', help='Open in browser'
-    )
-    parser.add_argument(
-        '--share', action='store_true', help='Share the gradio UI'
-    )
+    parser.add_argument("--inbrowser", action="store_true", help="Open in browser")
+    parser.add_argument("--share", action="store_true", help="Share the gradio UI")
 
     args = parser.parse_args()
 
     launch_kwargs = {}
-    launch_kwargs['server_name'] = args.listen
+    launch_kwargs["server_name"] = args.listen
 
     if args.username and args.password:
-        launch_kwargs['auth'] = (args.username, args.password)
+        launch_kwargs["auth"] = (args.username, args.password)
     if args.server_port:
-        launch_kwargs['server_port'] = args.server_port
+        launch_kwargs["server_port"] = args.server_port
     if args.inbrowser:
-        launch_kwargs['inbrowser'] = args.inbrowser
+        launch_kwargs["inbrowser"] = args.inbrowser
     if args.share:
-        launch_kwargs['share'] = args.share
+        launch_kwargs["share"] = args.share
 
     # Show the interface
     if IS_BATCHED:

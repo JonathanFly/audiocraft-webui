@@ -45,6 +45,11 @@ We offer a number of way to interact with MusicGen:
 5. Finally, checkout [@camenduru Colab page](https://github.com/camenduru/MusicGen-colab) which is regularly
   updated with contributions from @camenduru and the community.
 
+#### Gradio Demo
+<a href="assets/ui_app_screenshot.png">
+	<img src="assets/ui_app_screenshot.png" width="640">
+</a>
+
 ## API
 
 We provide a simple API and 4 pre-trained models. The pre trained models are:
